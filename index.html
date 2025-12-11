@@ -1,0 +1,768 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Plano Auditorio</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<style>
+  :root{--seat-size:36px;--gap:10px;--aisle-gap:48px}
+  body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial; margin:0; padding:12px; background:#f6f7f9}
+  header{display:flex;flex-direction:column;align-items:center;gap:12px;margin-bottom:10px}
+  h1{font-size:18px;margin:0}
+  #canvasWrap{background:#fff;border:1px solid #ddd;border-radius:8px;padding:12px;overflow:auto}
+  #stage{height:40px;background:#e0e0e0;border-radius:6px;margin:15px 0;display:flex;align-items:center;justify-content:center;font-weight:600;width:100%;}
+  svg{width:100%;height:auto;max-width:1200px;display:block}
+  .controls{display:flex;gap:8px;flex-wrap:wrap}
+  input,button,select{padding:8px;border-radius:6px;border:1px solid #bbb;font-size:14px}
+  .legend{display:flex;justify-content:center;flex-wrap:wrap;gap:15px;padding:10px 0;align-items:center;}
+  .legend div{display:flex;align-items:center;gap:2px}
+
+  .row-label { font-size: 16px; font-weight: bold; fill: #444; }
+
+  .seat-rect{cursor:pointer;stroke:#666;stroke-width:1; transition: fill 0.2s, opacity 0.2s; fill: var(--seat-color, #dff9d9);}
+  .selected{fill:#ffd54f}
+  .aisle-step { fill: #ddd; }
+  .drag-over { stroke: #000; stroke-width: 3; }
+  .seat[draggable="true"] {
+    cursor: move;
+    -webkit-user-drag: element;
+    user-select: none;
+  }
+  .seat text {
+        fill: #000 !important;
+        font-weight: 700;
+        font-size: 16px !important;
+    }
+  #modal{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);background:#fff;border-radius:8px;box-shadow:0 6px 30px rgba(0,0,0,0.2);padding:14px;max-width:420px;width:90%;display:none;z-index:40}
+  #modal label{display:block;font-size:13px;margin-top:8px}
+  #modal input{width:100%;box-sizing:border-box}
+  #modal .color-option { display: flex; align-items: center; gap: 8px; }
+  #modal .color-swatch { width: 16px; height: 16px; border: 1px solid #ccc; border-radius: 3px; }
+  #overlay{position:absolute;inset:0;background:rgba(0,0,0,0.25);display:none;z-index:30}
+  footer{margin-top:12px;font-size:13px;color:#444}
+  .topbar{display:flex;gap:8px;align-items:center}
+  .small{font-size:13px;padding:6px}
+  @media (max-width:600px){:root{--seat-size:22px}}
+  #tooltip{position:absolute;display:none;background:#333;color:#fff;padding:12px 18px;border-radius:8px;font-size:18px;pointer-events:none;z-index:100;white-space:nowrap;line-height:1.6}
+  #tooltip b{font-size:20px}
+
+  /* Estilos para el Panning */
+  #canvasWrap.is-zoomed {
+    cursor: grab;
+  }
+  #canvasWrap.is-panning {
+    cursor: grabbing;
+  }
+</style>
+</head>
+<body>
+<header>
+  <div>
+    <h1>Plano Auditorio</h1>
+  </div>
+  <div class="controls topbar">
+    <input id="search" placeholder="Buscar..." style="min-width:180px">
+    <button id="clearSearch" class="small">Limpiar</button>
+    <button id="exportJson" class="small">Exportar</button>
+    <button id="importJsonBtn" class="small">Importar</button>
+    <input type="file" id="importJsonFile" accept=".json" style="display:none;">
+    <button id="resetAll" class="small">Reset</button>
+  </div>
+</header>
+
+<div id="tooltip"></div>
+
+<div id="canvasWrap">
+  <div style="display:flex;justify-content:center">
+    <svg id="seating" viewBox="0 0 1200 900" preserveAspectRatio="xMidYMid meet"></svg>
+  </div>
+</div>
+
+<div style="display: flex; justify-content: center; align-items: center; gap: 10px;">
+  <div id="stage">ESCENARIO</div>
+  <button id="exportPdf" class="small">Exportar PDF</button>
+</div>
+
+<div class="legend" id="colorLegend">
+</div>
+
+
+<div id="overlay"></div>
+<div id="modal">
+  <h3 id="modalTitle">Editar butaca</h3>
+  <form id="seatForm">
+    <label>Butaca ID <input id="seatId" disabled></label>
+    <label>Nombre <input id="firstName" autocomplete="off"></label>
+    <label>Apellidos <input id="lastName"></label>
+    <label>Cargo <input id="role"></label>
+    <label>Institución <input id="institution"></label>
+    <div style="margin-top: 10px;">
+      <label for="colorCategory">Categoría</label>
+      <select id="colorCategory" style="width: 100%;"></select>
+    </div>
+    <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:15px">
+      <button type="button" id="saveBtn">Guardar</button>
+      <button type="button" id="clearBtn">Borrar</button>
+      <button type="button" id="closeBtn">Cerrar</button>
+    </div>
+  </form>
+</div>
+
+
+<script>
+document.addEventListener('DOMContentLoaded', () => {
+    // --- CONFIGURACIÓN DEL PLANO ---
+    const ROWS = 13;
+    const seatW = 36;
+    const gap = 12;
+    const aisleGap = 60;
+    const STORAGE_KEY = 'plano_butacas_v5_redesign'; // New key for the new layout
+
+    const colorCategories = {
+        'default': { name: 'Sin categoría', legendName: 'Libre', color: '#dff9d9' },
+        'policia_local_faena': { name: 'Policía Local Faena', legendName: 'PLFaena', color: '#7FD8FF' },
+        'policia_local_gala': { name: 'Policía Local Gala', legendName: 'PLGala', color: '#7EA7FF' },
+        'guardia_civil': { name: 'Guardia Civil', legendName: 'GC', color: '#9FD88A' },
+        'politicos': { name: 'Políticos', legendName: 'Politico', color: '#F2E082' },
+        'policias_jubilados': { name: 'Policías jubilados', legendName: 'Jubilado', color: '#B7BEC9' },
+        'personal_civil': { name: 'Personal civil', legendName: 'Civil', color: '#FF9A4D' },
+        'policia_nacional': { name: 'Policia Nacional', legendName: 'PN', color: '#F7AFC0' },
+        'militares': { name: 'Militares', legendName: 'Militar', color: '#8B8646' },
+        'cofradia': { name: 'Cofradía', legendName: 'Cofrade', color: '#C8A2C8' },
+        'reservado': { name: 'Reservado', legendName: 'Reservado', color: '#4D3535' }
+    };
+
+    const svg = document.getElementById('seating');
+    svg.innerHTML = '';
+
+    const marginX = 20;
+    const marginY = 50;
+    const rowHeight = 72;
+
+    let seats = {};
+    function svgEl(tag, attrs) { const el = document.createElementNS('http://www.w3.org/2000/svg', tag); for (const k in attrs) el.setAttribute(k, attrs[k]); return el; }
+    // Genera el ID de la butaca usando el número de fila y el número de butaca visible.
+    function seatIdFrom(row, seat) {
+        return `F${row}-B${seat}`;
+    }
+
+
+    // Función para obtener el número de butaca según el layout real de la imagen
+    function getSeatNumber(block, index) {
+        if (block === 'L') {
+            // L: 36, 34, ..., 20 (9 asientos)
+            return 36 - (index * 2);
+        }
+        else if (block === 'C') {
+            // C: 18, 16, ..., 2 | 1, 3, ..., 17 (18 asientos)
+            if (index < 9) {
+                return 18 - (index * 2);
+            } else {
+                return 1 + ((index - 9) * 2);
+            }
+        }
+        else if (block === 'R') {
+            // R: 19, 21, ..., 35 (9 asientos)
+            return 19 + (index * 2);
+        }
+        return '';
+    }
+
+
+    // --- CREACIÓN DEL PLANO ---
+    for (let r = 0; r < ROWS; r++) {
+        const y = marginY + r * rowHeight;
+        let x = marginX;
+
+        // Etiqueta de Fila (Número a la izquierda: 5 abajo, 1 arriba)
+        const rowNumber = ROWS - r;
+        const rowLabelEl = svgEl('text', {
+            x: marginX - 20,
+            y: y + seatW / 2 + 5,
+            class: 'row-label'
+        });
+        rowLabelEl.textContent = rowNumber;
+        svg.appendChild(rowLabelEl);
+
+        // Bloque Izquierdo (L): 9 asientos
+        for (let i = 0; i < 9; i++) {
+            const seatNumber = getSeatNumber('L', i);
+            const id = seatIdFrom(rowNumber, seatNumber);
+            createSeat(id, x + i * (seatW + gap), y, seatNumber);
+        }
+
+        x += 9 * (seatW + gap) + aisleGap;
+
+        // Bloque Central (C): 18 asientos
+        for (let i = 0; i < 18; i++) {
+            const seatNumber = getSeatNumber('C', i);
+            const id = seatIdFrom(rowNumber, seatNumber);
+            createSeat(id, x + i * (seatW + gap), y, seatNumber);
+        }
+
+        x += 18 * (seatW + gap) + aisleGap;
+
+        // Bloque Derecho (R): 9 asientos
+        for (let i = 0; i < 9; i++) {
+            const seatNumber = getSeatNumber('R', i);
+            const id = seatIdFrom(rowNumber, seatNumber);
+            createSeat(id, x + i * (seatW + gap), y, seatNumber);
+        }
+    }
+
+    // Dibujar pasillos (escaleras) - NUEVO DISEÑO
+    const totalSeatsL = 9, totalSeatsC = 18, totalSeatsR = 9;
+    const totalWidth = marginX * 2 + totalSeatsL * (seatW + gap) + totalSeatsC * (seatW + gap) + totalSeatsR * (seatW + gap) + 2 * aisleGap;
+
+    // Añadir etiquetas de fila a la derecha
+    for (let r = 0; r < ROWS; r++) {
+        const y = marginY + r * rowHeight;
+        const rowNumber = ROWS - r;
+        const rowLabelElRight = svgEl('text', {
+            x: totalWidth - marginX + 15,
+            y: y + seatW / 2 + 5,
+            class: 'row-label',
+            'text-anchor': 'start'
+        });
+        rowLabelElRight.textContent = rowNumber;
+        svg.appendChild(rowLabelElRight);
+    }
+    const aisle1X = marginX + totalSeatsL * (seatW + gap);
+    const aisle2X = marginX + totalSeatsL * (seatW + gap) + totalSeatsC * (seatW + gap) + aisleGap;
+
+    // Dibujar rectángulos horizontales para simular escalones
+    for (let r = 0; r < ROWS; r++) {
+        const y = marginY + r * rowHeight + (seatW / 2) - 1; // Center the step vertically
+        const step1 = svgEl('rect', { x: aisle1X + 5, y: y, width: aisleGap - 10, height: 2, class: 'aisle-step' });
+        const step2 = svgEl('rect', { x: aisle2X + 5, y: y, width: aisleGap - 10, height: 2, class: 'aisle-step' });
+        svg.appendChild(step1);
+        svg.appendChild(step2);
+    }
+
+
+    const bboxWidth = totalWidth + 40; // Add extra space for right labels
+    const bboxHeight = marginY + ROWS * rowHeight + 40; // Adjusted height
+    svg.setAttribute('viewBox', `0 0 ${bboxWidth} ${bboxHeight}`);
+
+    // FUNCIÓN DE CREACIÓN DE BUTACA (CON COLOR INLINE FORZADO)
+    function createSeat(id, x, y, seatNumber) {
+        const g = svgEl('g', { class: 'seat', 'data-id': id });
+
+        const rect = svgEl('rect', {
+            x: x, y: y, width: seatW, height: seatW, rx: 4, ry: 4,
+            class: 'seat-rect free', 'data-id': id
+        });
+
+        const text = svgEl('text', { x: x + seatW / 2, y: y + seatW / 2 + 5.5, 'text-anchor': 'middle', 'pointer-events': 'none' });
+        text.textContent = seatNumber;
+        g.appendChild(rect); g.appendChild(text); svg.appendChild(g);
+        seats[id] = { id, seatNumber, x, y, status: 'free', firstName: '', lastName: '', role: '', institution: '', colorCategory: 'default' };
+        g.addEventListener('click', onSeatClick); // Event on group, not rect
+        g.addEventListener('dragstart', onDragStart);
+        g.addEventListener('dragover', onDragOver);
+        g.addEventListener('dragleave', onDragLeave);
+        g.addEventListener('drop', onDrop);
+        g.addEventListener('mouseover', (e) => showTooltip(id, e));
+        g.addEventListener('mouseout', hideTooltip);
+        g.addEventListener('mousemove', (e) => {
+            tooltip.style.left = `${e.pageX + 15}px`;
+            tooltip.style.top = `${e.pageY + 15}px`;
+        });
+    }
+
+    // --- LÓGICA DE TOOLTIPS ---
+    const tooltip = document.getElementById('tooltip');
+
+    function showTooltip(id, e) {
+        const s = seats[id];
+        if (!s) return;
+
+        const rowNumber = s.id.split('-')[0].replace('F', '');
+        let tooltipHTML = `<b>Butaca: ${s.seatNumber}</b> (Fila: ${rowNumber})`;
+
+        const fullName = `${s.firstName} ${s.lastName}`.trim();
+        const professionalInfo = `${s.role} - ${s.institution}`.replace(/^\s*-\s*|\s*-\s*$/g, '').trim();
+
+        if (fullName) {
+            tooltipHTML += `<br>${fullName}`;
+        }
+        if (professionalInfo) {
+            tooltipHTML += `<br>${professionalInfo}`;
+        }
+        // Changed from 'else if' to 'if' to show category even if professional info exists
+        if (s.colorCategory !== 'default') {
+            tooltipHTML += `<br><i>${colorCategories[s.colorCategory].name}</i>`;
+        }
+
+        tooltip.innerHTML = tooltipHTML;
+        tooltip.style.display = 'block';
+    }
+
+    function hideTooltip() {
+        tooltip.style.display = 'none';
+    }
+
+
+    // --- LÓGICA DE MODAL Y ALMACENAMIENTO ---
+    const overlay = document.getElementById('overlay');
+    const modal = document.getElementById('modal');
+    const seatIdInput = document.getElementById('seatId');
+    const firstNameInput = document.getElementById('firstName');
+    const lastNameInput = document.getElementById('lastName');
+    const roleInput = document.getElementById('role');
+    const institutionInput = document.getElementById('institution');
+    const colorCategorySelect = document.getElementById('colorCategory');
+    let currentSeat = null;
+    let draggedSeatId = null;
+
+    function onDragStart(e) {
+        const id = e.currentTarget.getAttribute('data-id');
+        // Solo permitir arrastrar butacas ocupadas
+        if (seats[id].status !== 'free') {
+            draggedSeatId = id;
+            e.dataTransfer.effectAllowed = 'move';
+            e.dataTransfer.setData('text/plain', id); // Necesario para Firefox
+        } else {
+            e.preventDefault();
+        }
+    }
+
+    function onDragOver(e) {
+        e.preventDefault();
+        e.currentTarget.querySelector('rect').classList.add('drag-over');
+    }
+
+    function onDragLeave(e) {
+        e.currentTarget.querySelector('rect').classList.remove('drag-over');
+    }
+
+    function onDrop(e) {
+        e.preventDefault();
+        e.currentTarget.querySelector('rect').classList.remove('drag-over');
+
+        const targetId = e.currentTarget.getAttribute('data-id');
+
+        if (draggedSeatId && draggedSeatId !== targetId) {
+            // Intercambiar los datos de las butacas
+            const sourceSeat = seats[draggedSeatId];
+            const targetSeat = seats[targetId];
+
+            const tempStatus = targetSeat.status;
+            const tempFirstName = targetSeat.firstName;
+            const tempLastName = targetSeat.lastName;
+            const tempRole = targetSeat.role;
+            const tempInstitution = targetSeat.institution;
+            const tempColorCategory = targetSeat.colorCategory;
+
+            targetSeat.status = sourceSeat.status;
+            targetSeat.firstName = sourceSeat.firstName;
+            targetSeat.lastName = sourceSeat.lastName;
+            targetSeat.role = sourceSeat.role;
+            targetSeat.institution = sourceSeat.institution;
+            targetSeat.colorCategory = sourceSeat.colorCategory;
+
+            sourceSeat.status = tempStatus;
+            sourceSeat.firstName = tempFirstName;
+            sourceSeat.lastName = tempLastName;
+            sourceSeat.role = tempRole;
+            sourceSeat.institution = tempInstitution;
+            sourceSeat.colorCategory = tempColorCategory;
+
+            // Renderizar ambas butacas y guardar
+            renderSeat(draggedSeatId);
+            renderSeat(targetId);
+            saveToStorage();
+        }
+
+        draggedSeatId = null;
+    }
+
+    function onSeatClick(e) {
+        // Get the group, not the rect, to find the data-id
+        const g = e.currentTarget;
+        const id = g.getAttribute('data-id');
+        openModalFor(id);
+    }
+
+    function openModalFor(id) {
+        currentSeat = seats[id];
+        seatIdInput.value = `${id} (Nº ${currentSeat.seatNumber})`;
+        firstNameInput.value = currentSeat.firstName || '';
+        lastNameInput.value = currentSeat.lastName || '';
+        roleInput.value = currentSeat.role || '';
+        institutionInput.value = currentSeat.institution || '';
+        colorCategorySelect.value = currentSeat.colorCategory || 'default';
+
+        // Ajustar la posición del pop-up al scroll actual
+        const top = window.scrollY + (window.innerHeight / 2);
+        modal.style.top = `${top}px`;
+
+        // Ajustar el tamaño y la posición del overlay
+        overlay.style.height = `${document.body.scrollHeight}px`;
+
+        overlay.style.display = 'block';
+        modal.style.display = 'block';
+    }
+    function closeModal() { overlay.style.display = 'none'; modal.style.display = 'none'; currentSeat = null; searchInput.dispatchEvent(new Event('input')); }
+
+    document.getElementById('closeBtn').addEventListener('click', closeModal);
+    document.getElementById('saveBtn').addEventListener('click', () => {
+        if (!currentSeat) return;
+        currentSeat.firstName = firstNameInput.value.trim();
+        currentSeat.lastName = lastNameInput.value.trim();
+        currentSeat.role = roleInput.value.trim();
+        currentSeat.institution = institutionInput.value.trim();
+        currentSeat.colorCategory = colorCategorySelect.value;
+
+        // Auto-determine status
+        const hasData = currentSeat.firstName || currentSeat.lastName || currentSeat.role || currentSeat.institution;
+        const isDefaultCategory = currentSeat.colorCategory === 'default';
+
+        if (hasData || !isDefaultCategory) {
+            currentSeat.status = 'occupied';
+        } else {
+            currentSeat.status = 'free';
+        }
+
+        renderSeat(currentSeat.id);
+        saveToStorage();
+        closeModal();
+    });
+    document.getElementById('clearBtn').addEventListener('click', () => {
+        if (!currentSeat) return;
+        currentSeat.firstName = '';
+        currentSeat.lastName = '';
+        currentSeat.role = '';
+        currentSeat.institution = '';
+        currentSeat.status = 'free';
+        currentSeat.colorCategory = 'default';
+        renderSeat(currentSeat.id);
+        saveToStorage();
+        closeModal();
+    });
+    overlay.addEventListener('click', closeModal);
+
+    function renderSeat(id) {
+        const s = seats[id];
+        const g = svg.querySelector(`g.seat[data-id='${id}']`);
+        if (!g) return;
+
+        const rect = g.querySelector('rect');
+        rect.classList.remove('free', 'occupied', 'ausente', 'selected');
+
+        const categoryKey = s.colorCategory || 'default';
+        const categoryColor = colorCategories[categoryKey] ? colorCategories[categoryKey].color : colorCategories['default'].color;
+        rect.style.setProperty('--seat-color', categoryColor);
+
+        // Hacer arrastrables solo las butacas ocupadas
+        if (s.status === 'free') {
+            g.setAttribute('draggable', 'false');
+        } else {
+            g.setAttribute('draggable', 'true');
+        }
+
+        const rowNumber = s.id.split('-')[0].replace('F', '');
+        let titleText = `Butaca: ${s.seatNumber} (Fila: ${rowNumber})`;
+        const fullName = `${s.firstName} ${s.lastName}`.trim();
+        const professionalInfo = `${s.role} - ${s.institution}`.replace(/^\s*-\s*|\s*-\s*$/g, '').trim();
+
+        if (fullName) {
+            titleText += `\n${fullName}`;
+        }
+        if (professionalInfo) {
+            titleText += `\n${professionalInfo}`;
+        }
+        let title = g.querySelector('title');
+        if (title) title.remove();
+    }
+
+    function saveToStorage() { localStorage.setItem(STORAGE_KEY, JSON.stringify(seats)); }
+
+    function loadFromStorage() {
+        const raw = localStorage.getItem(STORAGE_KEY);
+        if (!raw) return;
+        try {
+            const loadedSeats = JSON.parse(raw);
+            // Only load data for seats that actually exist in the current layout
+            for (const id in loadedSeats) {
+                if (seats[id]) {
+                    seats[id] = { ...seats[id], ...loadedSeats[id] };
+                }
+            }
+        } catch (e) {
+            console.error("Error al cargar datos:", e);
+        }
+    }
+
+    // Cargar y Renderizar al inicio
+    function populateColorCategorySelect() {
+        for (const key in colorCategories) {
+            const option = document.createElement('option');
+            option.value = key;
+            option.textContent = colorCategories[key].name;
+            option.style.backgroundColor = colorCategories[key].color;
+            colorCategorySelect.appendChild(option);
+        }
+    }
+    function generateLegend() {
+        const legendContainer = document.getElementById('colorLegend');
+        legendContainer.innerHTML = '';
+        for (const key in colorCategories) {
+            if (key === 'default') continue;
+            const category = colorCategories[key];
+            const legendItem = document.createElement('div');
+            legendItem.innerHTML = `<svg width="18" height="12"><rect width="18" height="12" fill="${category.color}" stroke="#666"/></svg> ${category.legendName}`;
+            legendContainer.appendChild(legendItem);
+        }
+        const searchLegend = document.createElement('div');
+        searchLegend.innerHTML = `<svg width="18" height="12"><rect width="18" height="12" fill="#ffd54f" stroke="#666"/></svg> Busqueda`;
+        legendContainer.appendChild(searchLegend);
+    }
+    populateColorCategorySelect();
+    generateLegend();
+    loadFromStorage();
+    for (const id in seats) renderSeat(id);
+
+    // --- FUNCIONALIDAD DE BÚSQUEDA ---
+    const searchInput = document.getElementById('search');
+
+    searchInput.addEventListener('input', () => {
+        const q = searchInput.value.trim().toLowerCase();
+
+        // Reset all seats view
+        for (const id in seats) {
+            const g = svg.querySelector(`g.seat[data-id='${id}']`);
+            if (g) {
+                g.style.opacity = 1;
+                const rect = g.querySelector('rect');
+                if (rect) rect.classList.remove('selected');
+            }
+        }
+
+        if (!q) return;
+
+        // Apply search view
+        for (const id in seats) {
+            const s = seats[id];
+            const searchHaystack = `${s.id} ${s.seatNumber} ${s.firstName} ${s.lastName} ${s.role} ${s.institution}`.toLowerCase();
+            const match = searchHaystack.includes(q);
+            const g = svg.querySelector(`g.seat[data-id='${id}']`);
+
+            if (g) {
+                if (match) {
+                    g.style.opacity = 1;
+                    const rect = g.querySelector('rect');
+                    if (rect) rect.classList.add('selected');
+                } else {
+                    g.style.opacity = 0.2;
+                }
+            }
+        }
+    });
+
+    document.getElementById('clearSearch').addEventListener('click', () => {
+        searchInput.value = '';
+        searchInput.dispatchEvent(new Event('input'));
+    });
+
+    // --- FUNCIONALIDAD DE EXPORTACIÓN / IMPORTACIÓN ---
+
+    document.getElementById('exportJson').addEventListener('click', () => {
+        const dataStr = JSON.stringify(seats, null, 2);
+        const blob = new Blob([dataStr], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = 'plano_auditorio_export_' + new Date().toISOString().slice(0, 10) + '.json';
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+    });
+
+    const importJsonBtn = document.getElementById('importJsonBtn');
+    const importJsonFile = document.getElementById('importJsonFile');
+
+    importJsonBtn.addEventListener('click', () => {
+        importJsonFile.click();
+    });
+
+    importJsonFile.addEventListener('change', (event) => {
+        const file = event.target.files[0];
+        if (!file) return;
+
+        const reader = new FileReader();
+        reader.onload = function (e) {
+            try {
+                const importedSeats = JSON.parse(e.target.result);
+                if (importedSeats && typeof importedSeats === 'object') {
+                    loadFromStorage(); // First, reset to default layout
+                    let count = 0;
+                    for (const id in importedSeats) {
+                        if (seats[id]) {
+                            // Merge imported data
+                            seats[id] = { ...seats[id], ...importedSeats[id] };
+                            renderSeat(id);
+                            count++;
+                        }
+                    }
+                    saveToStorage();
+                    alert(`Datos importados con éxito. ${count} butacas actualizadas.`);
+                } else {
+                    alert('Error: El archivo JSON no tiene el formato esperado.');
+                }
+            } catch (error) {
+                alert('Error al procesar el archivo JSON: ' + error.message);
+            }
+        };
+        reader.readAsText(file);
+        event.target.value = null;
+    });
+
+
+    // --- FUNCIONALIDAD DE RESET ---
+    document.getElementById('resetAll').addEventListener('click', () => {
+        if (confirm('⚠️ ADVERTENCIA: ¿Estás seguro de que quieres BORRAR TODOS LOS DATOS guardados y restaurar el plano?')) {
+            localStorage.removeItem(STORAGE_KEY);
+            window.location.reload();
+        }
+    });
+
+    document.getElementById('exportPdf').addEventListener('click', () => {
+        const { jsPDF } = window.jspdf;
+        const doc = new jsPDF();
+
+        const occupiedSeats = Object.values(seats)
+            .filter(s => s.status !== 'free' && (s.firstName || s.lastName))
+            .sort((a, b) => {
+                const lastNameA = a.lastName.toLowerCase();
+                const lastNameB = b.lastName.toLowerCase();
+                if (lastNameA < lastNameB) return -1;
+                if (lastNameA > lastNameB) return 1;
+                return 0;
+            });
+
+        const pageHeight = doc.internal.pageSize.height;
+        const topMargin = 20;
+        const bottomMargin = 20;
+        const entryHeight = 20; // Estimated height for one entry
+        let y = topMargin;
+
+        const addHeader = () => {
+            doc.setFontSize(18);
+            doc.text("Listado de Asistentes", 105, y, null, null, "center");
+            y += 15;
+        };
+
+        addHeader();
+
+        occupiedSeats.forEach(seat => {
+            if (y + entryHeight > pageHeight - bottomMargin) {
+                doc.addPage();
+                y = topMargin; // Reset y to the top margin for the new page
+                addHeader(); // Add header to the new page
+            }
+
+            doc.setFontSize(12);
+            const seatInfo = `Butaca: ${seat.seatNumber} (Fila: ${seat.id.split('-')[0].replace('F', '')})`;
+            const name = `${seat.lastName}, ${seat.firstName}`;
+            const professionalInfo = `${seat.role} - ${seat.institution}`.replace(/^\s*-\s*|\s*-\s*$/g, '').trim();
+
+            doc.text(`${name}`, 20, y);
+            doc.setFontSize(10);
+            doc.text(seatInfo, 20, y + 5);
+            if (professionalInfo) {
+                doc.text(professionalInfo, 20, y + 10);
+            }
+            y += entryHeight;
+        });
+
+        doc.save('listado_asistentes.pdf');
+    });
+
+    // --- FUNCIONALIDAD DE ZOOM ---
+    let currentZoom = 1;
+    const svgContainer = document.getElementById('seating').parentElement;
+    const canvasWrap = document.getElementById('canvasWrap');
+
+    svg.addEventListener('wheel', (event) => {
+        event.preventDefault();
+
+        // Suavizar el zoom
+        const zoomFactor = event.deltaY > 0 ? 0.95 : 1.05;
+
+        const rect = canvasWrap.getBoundingClientRect();
+        const cursorX = event.clientX - rect.left;
+        const cursorY = event.clientY - rect.top;
+
+        const sceneX = cursorX + canvasWrap.scrollLeft;
+        const sceneY = cursorY + canvasWrap.scrollTop;
+
+        const oldZoom = currentZoom;
+        currentZoom *= zoomFactor;
+        currentZoom = Math.max(1, Math.min(currentZoom, 5)); // Limitar zoom
+
+        if (currentZoom <= 1) {
+            currentZoom = 1;
+            canvasWrap.classList.remove('is-zoomed');
+            svg.style.width = '100%';
+            svg.style.height = 'auto';
+            svg.style.maxWidth = '1200px';
+            svgContainer.style.minWidth = '';
+        } else {
+            const newWidth = canvasWrap.clientWidth * currentZoom;
+            svg.style.width = `${newWidth}px`;
+            svg.style.height = 'auto';
+            svg.style.maxWidth = 'none';
+            svgContainer.style.minWidth = `${newWidth}px`;
+            canvasWrap.classList.add('is-zoomed');
+
+            const newScrollLeft = (sceneX * (currentZoom / oldZoom)) - cursorX;
+            const newScrollTop = (sceneY * (currentZoom / oldZoom)) - cursorY;
+
+            canvasWrap.scrollLeft = newScrollLeft;
+            canvasWrap.scrollTop = newScrollTop;
+        }
+    });
+
+    // --- FUNCIONALIDAD DE PANNING (ARRASTRE) ---
+    let isPanning = false;
+    let startX, startY, scrollLeftStart, scrollTopStart;
+
+    canvasWrap.addEventListener('mousedown', (e) => {
+        // Solo activar el pan si hay zoom y no se ha hecho click en una butaca
+        if (currentZoom > 1 && e.target.closest('.seat') === null) {
+            isPanning = true;
+            canvasWrap.classList.add('is-panning');
+            startX = e.pageX - canvasWrap.offsetLeft;
+            startY = e.pageY - canvasWrap.offsetTop;
+            scrollLeftStart = canvasWrap.scrollLeft;
+            scrollTopStart = canvasWrap.scrollTop;
+        }
+    });
+
+    canvasWrap.addEventListener('mouseleave', () => {
+        isPanning = false;
+        canvasWrap.classList.remove('is-panning');
+    });
+
+    canvasWrap.addEventListener('mouseup', () => {
+        isPanning = false;
+        canvasWrap.classList.remove('is-panning');
+    });
+
+    canvasWrap.addEventListener('mousemove', (e) => {
+        if (!isPanning) return;
+        e.preventDefault();
+        const x = e.pageX - canvasWrap.offsetLeft;
+        const y = e.pageY - canvasWrap.offsetTop;
+        const walkX = (x - startX);
+        const walkY = (y - startY);
+        canvasWrap.scrollLeft = scrollLeftStart - walkX;
+        canvasWrap.scrollTop = scrollTopStart - walkY;
+    });
+});
+</script>
+</body>
+</html>
