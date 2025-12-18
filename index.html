@@ -294,14 +294,14 @@ document.addEventListener('DOMContentLoaded', () => {
   // Detalles de la butaca (ocultos por defecto)
   const detailsText = svgEl('text',{
       x:x+seatW/2,
-      y:y+14, // Posición inicial para la primera línea
+      y:y+15, // Ajuste para centrar verticalmente
       'text-anchor':'middle',
       'pointer-events':'none',
-      'font-size':'9px',
+      'font-size':'4.5px', // Tamaño de fuente más pequeño
       'class': 'seat-details'
   });
   const tspan1 = svgEl('tspan', { 'class': 'seat-details-name', x: x + seatW / 2, dy: '0' });
-  const tspan2 = svgEl('tspan', { 'class': 'seat-details-surname', x: x + seatW / 2, dy: '1.2em' });
+  const tspan2 = svgEl('tspan', { 'class': 'seat-details-surname', x: x + seatW / 2, dy: '5' }); // Espaciado de línea fijo
   detailsText.appendChild(tspan1);
   detailsText.appendChild(tspan2);
 
