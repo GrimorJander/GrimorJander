@@ -9,7 +9,7 @@ test('should display occupant name on seat when zoomed in', async ({ page }) => 
 
   // 2. Fill in the first and last name
   await page.locator('#firstName').fill('Jules');
-  await page.locator('#lastName').fill('Test');
+  await page.locator('#lastName').fill('Verne Rodriguez');
 
   // 3. Save the changes
   await page.locator('#saveBtn').click();
@@ -25,6 +25,6 @@ test('should display occupant name on seat when zoomed in', async ({ page }) => 
 
   // 5. Take a screenshot
   const seatElement = await page.locator(`g[data-id="${seatId}"]`);
-  await seatElement.screenshot({ path: 'zoomed_seat_name_fix.png' });
+  await seatElement.screenshot({ path: 'zoomed_seat_3_lines.png' });
 
 });

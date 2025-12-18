@@ -294,16 +294,18 @@ document.addEventListener('DOMContentLoaded', () => {
   // Detalles de la butaca (ocultos por defecto)
   const detailsText = svgEl('text',{
       x:x+seatW/2,
-      y:y+15, // Ajuste para centrar verticalmente
+      y:y+12, // Ajustado para 3 líneas
       'text-anchor':'middle',
       'pointer-events':'none',
-      'font-size':'4.5px', // Tamaño de fuente más pequeño
+      'font-size':'3.8px', // Tamaño de fuente más pequeño para 3 líneas
       'class': 'seat-details'
   });
   const tspan1 = svgEl('tspan', { 'class': 'seat-details-name', x: x + seatW / 2, dy: '0' });
-  const tspan2 = svgEl('tspan', { 'class': 'seat-details-surname', x: x + seatW / 2, dy: '5' }); // Espaciado de línea fijo
+  const tspan2 = svgEl('tspan', { 'class': 'seat-details-surname1', x: x + seatW / 2, dy: '4.5' });
+  const tspan3 = svgEl('tspan', { 'class': 'seat-details-surname2', x: x + seatW / 2, dy: '4.5' });
   detailsText.appendChild(tspan1);
   detailsText.appendChild(tspan2);
+  detailsText.appendChild(tspan3);
 
   g.appendChild(rect);
   g.appendChild(seatNumberText);
@@ -514,12 +516,15 @@ document.addEventListener('DOMContentLoaded', () => {
             g.setAttribute('draggable', 'true');
         }
 
-    // Actualizar el texto de los detalles
+    // Actualizar el texto de los detalles en 3 líneas
     const nameTspan = g.querySelector('.seat-details-name');
-    const surnameTspan = g.querySelector('.seat-details-surname');
-    if (nameTspan && surnameTspan) {
+    const surname1Tspan = g.querySelector('.seat-details-surname1');
+    const surname2Tspan = g.querySelector('.seat-details-surname2');
+    if (nameTspan && surname1Tspan && surname2Tspan) {
         nameTspan.textContent = s.firstName || '';
-        surnameTspan.textContent = s.lastName || '';
+        const apellidos = (s.lastName || '').split(' ');
+        surname1Tspan.textContent = apellidos[0] || '';
+        surname2Tspan.textContent = apellidos.slice(1).join(' ') || '';
     }
 
         const rowNumber = s.id.split('-')[0].replace('F', '');
