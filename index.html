@@ -33,7 +33,7 @@
   #stage{height:40px;background:#e0e0e0;border-radius:6px;margin:15px 0;display:flex;align-items:center;justify-content:center;font-weight:600;width:100%;}
   svg{
     width:100%;
-    height:100%;
+    height:auto;
     max-width:none;
     display:block;
     margin: auto;
@@ -54,11 +54,19 @@
     -webkit-user-drag: element;
     user-select: none;
   }
-  .seat text {
+    .seat .seat-number {
         fill: #000 !important;
         font-weight: 700;
         font-size: 16px !important;
         user-select: none;
+    }
+    .seat-details {
+        visibility: hidden; /* Oculto por defecto */
+        fill: #000;
+        font-weight: 600;
+    }
+    .show-details .seat-number {
+        display: none; /* Ocultar número al mostrar detalles */
     }
   #modal{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);background:#fff;border-radius:8px;box-shadow:0 6px 30px rgba(0,0,0,0.2);padding:14px;max-width:420px;width:90%;display:none;z-index:40}
   #modal label{display:block;font-size:13px;margin-top:8px}
@@ -280,9 +288,27 @@ document.addEventListener('DOMContentLoaded', () => {
             class: 'seat-rect free', 'data-id': id
         });
 
-        const text = svgEl('text', { x: x + seatW / 2, y: y + seatW / 2 + 5.5, 'text-anchor': 'middle', 'pointer-events': 'none' });
-        text.textContent = seatNumber;
-        g.appendChild(rect); g.appendChild(text); svg.appendChild(g);
+  const seatNumberText = svgEl('text',{x:x+seatW/2,y:y+seatW/2+5.5,'text-anchor':'middle','pointer-events':'none', class: 'seat-number'});
+  seatNumberText.textContent = seatNumber;
+
+  // Detalles de la butaca (ocultos por defecto)
+  const detailsText = svgEl('text',{
+      x:x+seatW/2,
+      y:y+14, // Posición inicial para la primera línea
+      'text-anchor':'middle',
+      'pointer-events':'none',
+      'font-size':'9px',
+      'class': 'seat-details'
+  });
+  const tspan1 = svgEl('tspan', { 'class': 'seat-details-name', x: x + seatW / 2, dy: '0' });
+  const tspan2 = svgEl('tspan', { 'class': 'seat-details-surname', x: x + seatW / 2, dy: '1.2em' });
+  detailsText.appendChild(tspan1);
+  detailsText.appendChild(tspan2);
+
+  g.appendChild(rect);
+  g.appendChild(seatNumberText);
+  g.appendChild(detailsText);
+  svg.appendChild(g);
         seats[id] = { id, seatNumber, x, y, status: 'free', firstName: '', lastName: '', role: '', institution: '', colorCategory: 'default' };
         g.addEventListener('click', onSeatClick); // Event on group, not rect
         g.addEventListener('dragstart', onDragStart);
@@ -487,6 +513,14 @@ document.addEventListener('DOMContentLoaded', () => {
         } else {
             g.setAttribute('draggable', 'true');
         }
+
+    // Actualizar el texto de los detalles
+    const nameTspan = g.querySelector('.seat-details-name');
+    const surnameTspan = g.querySelector('.seat-details-surname');
+    if (nameTspan && surnameTspan) {
+        nameTspan.textContent = s.firstName || '';
+        surnameTspan.textContent = s.lastName || '';
+    }
 
         const rowNumber = s.id.split('-')[0].replace('F', '');
         let titleText = `Butaca: ${s.seatNumber} (Fila: ${rowNumber})`;
@@ -728,6 +762,16 @@ document.addEventListener('DOMContentLoaded', () => {
         const oldZoom = currentZoom;
         currentZoom *= zoomFactor;
         currentZoom = Math.max(1, Math.min(currentZoom, 5)); // Limitar zoom
+
+        // Mostrar u ocultar detalles según el zoom
+        const details = svg.querySelectorAll('.seat-details');
+        if (currentZoom > 2.5) {
+            details.forEach(d => d.style.visibility = 'visible');
+            svg.classList.add('show-details'); // Mantenemos la clase para ocultar los números
+        } else {
+            details.forEach(d => d.style.visibility = 'hidden');
+            svg.classList.remove('show-details');
+        }
 
         if (currentZoom <= 1) {
             currentZoom = 1;
