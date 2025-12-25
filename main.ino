@@ -662,6 +662,8 @@ void processBLECommand(String cmd) {
       currentMode = SPLIT;
       runners = 0;
       runnersFinished = 0;
+      bestTimeSplit = 0;
+      hasBestTimeSplit = false;
       Serial.println("Modo SPLIT.");
       if (deviceConnected) {
         pTxCharacteristic->setValue("Modo SPLIT.\n");
